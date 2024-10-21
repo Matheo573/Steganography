@@ -1,9 +1,9 @@
 import logging
 from argparse import ArgumentParser
 from typing import Callable
-from PIL import Image
 import os
 import io
+from PIL import Image
 
 
 def is_valid_steganography_extension(extension):
@@ -18,8 +18,59 @@ def read_file_as_bytes(file_path) -> tuple[bytes, int]:
     return byte_stream, file_size
 
 
-class BitsIO(io.BufferedIOBase):
-    pass
+class BitStreamBuffer():
+    def __init__(self, buffer_size: int = 4096, begin_pointer: int = 0) -> None:
+        self._buffer_size = buffer_size
+        self._buffer = bytearray(buffer_size)
+        self._bit_pointer = begin_pointer
+        return
+
+    def offset(self) -> int:
+        return self._bit_pointer >> 3
+    
+    def bit(self) -> int:
+        return self._bit_pointer & 0b00000111
+    
+    def __len__(self) -> int:
+        return self._buffer_size
+    
+    def getbuffer(self) -> bytearray:
+        return self._buffer
+    
+    def clearbuffer(self, start: int = 0, end: int = -1) -> None:
+        self._buffer = bytearray(self._buffer_size)
+        return
+
+
+
+class BitStreamReader(io.FileIO, BitStreamBuffer):
+    def __init__(
+        self,
+        file: "FileDescriptorOrPath", # type: ignore
+        buffer_size: int = 4096,
+        begin_pointer: int = 0, 
+        closefd: bool = True,
+        opener: "io._Opener | None" = None
+    ) -> None:
+        
+        io.FileIO.__init__(self, file, mode="rb", closefd=closefd, opener=opener)
+        BitStreamBuffer.__init__(self, buffer_size, begin_pointer)
+
+        return
+class BitStreamWriter(io.FileIO, BitStreamBuffer):
+    def __init__(
+        self,
+        file: "FileDescriptorOrPath", # type: ignore
+        buffer_size: int = 4096,
+        begin_pointer: int = 0, 
+        closefd: bool = True,
+        opener: "io._Opener | None" = None
+    ) -> None:
+        
+        io.FileIO.__init__(self, file, mode="wb", closefd=closefd, opener=opener)
+        BitStreamBuffer.__init__(self, buffer_size, begin_pointer)
+
+        return
 
 def is_transparent(pixel) -> bool:
     return not pixel[3]
@@ -49,6 +100,7 @@ def encode(input, message, output):
     bit_offset = 0
     mask_1 = 0b00000001
     mask_3 = 0b00000111
+    reader = BitStreamReader(input)
 
 
     try:
