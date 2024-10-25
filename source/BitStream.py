@@ -1,9 +1,6 @@
-
 import io
-
-
-default_buffer_size = 4096
-
+import logging as log
+from __future__ import annotations
 
 def mask(size: int) -> int:
     """
@@ -20,11 +17,16 @@ def mask(size: int) -> int:
 
 
 class BitPointer:
+    
+ 
     def __init__(self, address: int | None = None, length: int | None = None) -> None:
+        DEFAULT_BUFFER_SIZE: int = 4096
+        
         if address is None:
             address = 0
         if length is None:
-            length = default_buffer_size
+            length = DEFAULT_BUFFER_SIZE
+            
         self._address = address
         self._address_max = length << 3
         return
@@ -41,7 +43,7 @@ class BitPointer:
         """
         return self._address_max
 
-    def position_byte(self) -> int:
+    def get_byte(self) -> int:
         """
         Get the current byte position within the buffer.
 
@@ -50,7 +52,7 @@ class BitPointer:
         """
         return self._address >> 3
 
-    def position_bit(self) -> int:
+    def get_bit(self) -> int:
         """
         Get the current bit position within the byte. Values in range 0 - 7
 
@@ -71,18 +73,28 @@ class BitPointer:
 
 class BitStreamBuffer:
     def __init__(self, buffer_size: int = 4096, start_pointer: int = 0) -> None:
-        self._buffer = bytearray(buffer_size)
-        self._buffer_size = buffer_size
-        self._bit_pointer = BitPointer(start_pointer)
+        self._buffer: bytearray = bytearray(buffer_size)
+        self._buffer_size: int = buffer_size
+        self._bit_pointer: BitPointer = BitPointer(start_pointer)
         return
 
+    def get_buffer_size(self) -> bytearray:
+        return self._buffer_size
+
+    def set_buffer_size(self, new_buffer_size: int) -> bool:
+        try:
+            self._buffer_size = new_buffer_size
+            return True
+        except ValueError as ve:
+            log.error(f"Failed to set new buffer size. Error: {ve}")
+            return False
     def empty(self) -> bool:
         return self._buffer.__len__() == 0
 
-    def getbuffer(self) -> bytearray:
+    def get_buffer(self) -> bytearray:
         return self._buffer
 
-    def clearbuffer(self, start: int | None, end: int | None) -> None:
+    def clear_buffer(self, start: int | None, end: int | None) -> None:
         """
         Clear the buffer content in the given range.
 
@@ -96,11 +108,15 @@ class BitStreamBuffer:
         if start is None and end is None:
             self._buffer = bytearray(self._buffer_size)
             return
+        if start is None:
+            start = 0
+        if end is None:
+            end = self._buffer_size
         for i in range(start, end):
-            self._buffer[i] = b''
+            self._buffer[i] = b'\x00'
         return
 
-    def setbuffer(self, insert_buffer: bytearray, start: int | None = None, end: int | None = None) -> None:
+    def set_buffer(self, insert_buffer: bytearray) -> bool:
         """
         Set the buffer content with the provided bytearray.
 
@@ -112,34 +128,37 @@ class BitStreamBuffer:
         Returns:
             None
         """
-        # replace the buffer
-        if start is None and end is None:
+        # # replace the buffer
+        # if start is None and end is None:
+        #     self._buffer = insert_buffer
+        #     return
+
+        # # replace the end of buffer
+        # if end is None:
+        #     self._buffer = self._buffer[:start] + insert_buffer
+        #     return
+
+        # # replace the start of buffer
+        # if start is None:
+        #     self._buffer = insert_buffer[:end] + self._buffer[end:]
+
+        # # replace the middle of buffer
+        try:
             self._buffer = insert_buffer
-            return
-
-        # replace the end of buffer
-        if end is None:
-            self._buffer = self._buffer[:start] + insert_buffer
-            return
-
-        # replace the start of buffer
-        if start is None:
-            self._buffer = insert_buffer[:end] + self._buffer[end:]
-
-        # replace the middle of buffer
-        
-        self._buffer = self._buffer[:start] + insert_buffer[:end] + self._buffer[end:]
-        return
+            return True
+        except ValueError as ve:
+            log.error(f"Failed to set new buffer. Error: {ve}")
+            return False
 
 
 class BitStreamReader(io.FileIO, BitStreamBuffer):
     def __init__(
         self,
-        file: "FileDescriptorOrPath",  # type: ignore
+        file: io.FileDescriptorOrPath,  # type: ignore
         buffer_size: int = 4096,
         begin_pointer: int = 0,
         closefd: bool = True,
-        opener: "io._Opener | None" = None,
+        opener: io._Opener | None = None,
     ) -> None:
         
         io.FileIO.__init__(self, file, mode="rb", closefd=closefd, opener=opener)
@@ -147,7 +166,7 @@ class BitStreamReader(io.FileIO, BitStreamBuffer):
 
         return
 
-    def is_end_of_file(self) -> bool:
+    def is_EOF(self) -> bool:
         """
         Check if the end of the file has been reached.
 
@@ -156,63 +175,82 @@ class BitStreamReader(io.FileIO, BitStreamBuffer):
         Returns:
             bool: True if the end of the file has been reached, False otherwise.
         """
-        self.seek(1, 1) # FIXME move back
-        return self.tell() == 0
-
+        self.seek(1, 1)
+        val = self.tell() == 0
+        self.seek(-1, 1)
+        return val
+    
     def fill_buffer(
         self,
         start: int | None = None,
         end: int | None = None,
-    ) -> None:
+    ) -> bool:
 
         """
-        Fill the buffer with the provided byte range from the underlying file.
+        Fill the buffer with data from the file.
 
-        This method seeks the file pointer to the start index and reads the specified byte range
-        and sets the buffer content with the read bytes.
+        The method fills the buffer from the given start index to the given end index with data from the file.
 
         Args:
-            start (int | None): The starting index of the byte range to read.
-            end (int | None): The ending index of the byte range to read.
+            start (int | None): The starting index of the buffer to fill. Defaults to 0.
+            end (int | None): The ending index of the buffer to fill. Defaults to the buffer size.
 
         Returns:
-            None
+            bool: True if the buffer was filled successfully, False otherwise.
         """
         if start is None:
             start = 0
         if end is None:
             end = self._buffer_size
-        if self.is_end_of_file():
-            raise EOFError
+        try:
+            if self.is_EOF():
+                log.info("End of file reached.")
+                return False
+            self._buffer = self.set_buffer(self._buffer[:start] + io.FileIO.read(self, end - start) + self._buffer[end:])
+            return True
 
-        self._buffer = self.setbuffer(bytearray(io.FileIO.read(self, end - start)), start, end)
-        return
+        except ValueError as ve:
+            log.error(f"Failed to fill buffer. Error: {ve}")
+            return False
         
 
-    def __iter__(self) -> "BitStreamReader":
+    def __iter__(self) -> BitStreamReader:
         return self
     
     def __next__(self) -> bytes:
         if self._bit_pointer >= self.len_bits():
             raise StopIteration
-        val = self._buffer[self.position_byte()]
-        val >>= 7 - self.position_bit()
+        val = self._buffer[self.get_byte()]
+        val >>= 7 - self.get_bit()
         val &= mask(1)
         self._bit_pointer += 1
         return val
 
-    def read_bits(self, num_bits: int) -> bytes:
-        if num_bits <= 0:
+    def read_bits(self, num_bits: int) -> bytearray:
+        if num_bits == 0:
             return b''
         
-        if self._bit_pointer + num_bits > self.len_bits():
-            self._buffer = self._buffer[self.position_byte():]
-            self._bit_pointer = self.position_bit()
-            self.fill_buffer(start=self._buffer.__len__())
-        result = bytearray((num_bits-1) >> 3 + 1)
-        res_pointer = 0
-        for i in self:
-            pass
+        if num_bits < 0:
+            log.error(f"Can't read negative bits. Maybe move the pointer back.")
+            # TODO: make a move pointer method
+            raise ValueError
+        
+        # TODO: what if num_bits > self.len_bits()?
+        if self._bit_pointer + num_bits > self.len_bits():  # if not enough bits in buffer
+            self.set_buffer(self._buffer[self.get_byte():] + self._buffer[:self.get_byte()])   # move remaining buffer to the start
+            self.fill_buffer(len(self) - self.get_byte())  # fill the rest of the buffer
+            self._bit_pointer = self.get_bit()              # reset pointer
+            
+        result: bytearray = bytearray((num_bits-1) >> 3 + 1)
+        res_pointer: int = 0
+        val: bytes = b'\x00'
+        mask_3 = mask(3)
+        
+        for i in range(num_bits):
+            val = self.__next__()
+            result[res_pointer << 3] |= val << (7 - (i & mask_3))
+            res_pointer += 1
+        
         return result
         
         
