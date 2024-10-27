@@ -1,6 +1,6 @@
+from __future__ import annotations
 import io
 import logging as log
-from __future__ import annotations
 
 def mask(size: int) -> int:
     """
@@ -18,16 +18,15 @@ def mask(size: int) -> int:
 
 class BitPointer:
     
- 
-    def __init__(self, address: int | None = None, length: int | None = None) -> None:
+    def __init__(self, length: int | None = None, init_address: int | None = None) -> None:
         DEFAULT_BUFFER_SIZE: int = 4096
         
-        if address is None:
-            address = 0
+        if init_address is None:
+            init_address = 0
         if length is None:
             length = DEFAULT_BUFFER_SIZE
             
-        self._address = address
+        self._address = init_address
         self._address_max = length << 3
         return
     
@@ -63,22 +62,77 @@ class BitPointer:
 
     def __iter__(self) -> "BitPointer":
         return self
-    def __next__(self) -> bytes:
+    
+    def __next__(self) -> tuple[int, int]:
         if self._address >= self._address_max:
             raise StopIteration
-        address = self._address
+        offset, bit = self.get_byte(), self.get_bit()
         self._address += 1
-        return address
+        return offset, bit
+
+    def __int__(self) -> int:
+        return self._address
+
+    def __str__(self) -> str:
+        return f"BitPointer({self._address_max}, {self._address})"
+
+    def __repr__(self) -> str:
+        return f"BitPointer({self._address_max}, {self._address})"
+
+    def __eq__(self, other: object) -> bool:
+        return int(self) == int(other)
+
+    def __ne__(self, other: object) -> bool:
+        return int(self) != int(other)
+
+    def __lt__(self, other: object) -> bool:
+        return int(self) < int(other)
+
+    def __gt__(self, other: object) -> bool:
+        return int(self) > int(other)
+
+    def __le__(self, other: object) -> bool:
+        return self < other or self == other
+
+    def __ge__(self, other: object) -> bool:
+        return self > other or self == other
+    
+    def __add__(self, other: int) -> BitPointer:
+        return BitPointer(self._address + other)
+
+    def __sub__(self, other: int) -> BitPointer:
+        return BitPointer(self._address - other)
+
+    def __iadd__(self, other: int) -> BitPointer:
+        self._address += other
+        return self
+
+    def __isub__(self, other: int) -> BitPointer:
+        self._address -= other
+        return self
 
 
 class BitStreamBuffer:
     def __init__(self, buffer_size: int = 4096, start_pointer: int = 0) -> None:
-        self._buffer: bytearray = bytearray(buffer_size)
         self._buffer_size: int = buffer_size
-        self._bit_pointer: BitPointer = BitPointer(start_pointer)
+        self._bit_pointer: BitPointer = BitPointer(buffer_size, start_pointer)
+        self._buffer: bytearray = bytearray(buffer_size)
         return
 
-    def get_buffer_size(self) -> bytearray:
+    def __iter__(self) -> int:
+        return self
+
+    # TODO: _bit_pointer is no longer an int
+    def __next__(self) -> int:
+        if self._bit_pointer >= self.len_bits():
+            raise StopIteration
+        val = self._buffer[self.get_byte()]
+        val >>= 7 - self.get_bit()
+        val &= mask(1)
+        self._bit_pointer += 1
+        return val
+    
+    def get_buffer_size(self) -> int:
         return self._buffer_size
 
     def set_buffer_size(self, new_buffer_size: int) -> bool:
@@ -88,33 +142,22 @@ class BitStreamBuffer:
         except ValueError as ve:
             log.error(f"Failed to set new buffer size. Error: {ve}")
             return False
-    def empty(self) -> bool:
+    def is_empty(self) -> bool:
         return self._buffer.__len__() == 0
+
+    def set_bit_pointer(self, new_pointer: int) -> bool:
+        try:
+            self._bit_pointer = BitPointer(new_pointer)
+            return True
+        except ValueError as ve:
+            log.error(f"Failed to set new bit pointer. Error: {ve}")
+            return False
+
+    def get_bit_pointer(self) -> BitPointer:
+        return self._bit_pointer
 
     def get_buffer(self) -> bytearray:
         return self._buffer
-
-    def clear_buffer(self, start: int | None, end: int | None) -> None:
-        """
-        Clear the buffer content in the given range.
-
-        Args:
-            start (int | None): The starting index of the range to clear.
-            end (int | None): The ending index of the range to clear.
-
-        Returns:
-            None
-        """
-        if start is None and end is None:
-            self._buffer = bytearray(self._buffer_size)
-            return
-        if start is None:
-            start = 0
-        if end is None:
-            end = self._buffer_size
-        for i in range(start, end):
-            self._buffer[i] = b'\x00'
-        return
 
     def set_buffer(self, insert_buffer: bytearray) -> bool:
         """
@@ -149,6 +192,29 @@ class BitStreamBuffer:
         except ValueError as ve:
             log.error(f"Failed to set new buffer. Error: {ve}")
             return False
+
+def clear_buffer(self, start: int | None, end: int | None) -> None:
+        """
+        Clear the buffer content in the given range.
+
+        Args:
+            start (int | None): The starting index of the range to clear.
+            end (int | None): The ending index of the range to clear.
+
+        Returns:
+            None
+        """
+        if start is None and end is None:
+            self._buffer = bytearray(self._buffer_size)
+            return
+        if start is None:
+            start = 0
+        if end is None:
+            end = self._buffer_size
+        for i in range(start, end):
+            self._buffer[i] = b'\x00'
+        return
+
 
 
 class BitStreamReader(io.FileIO, BitStreamBuffer):
@@ -216,8 +282,11 @@ class BitStreamReader(io.FileIO, BitStreamBuffer):
 
     def __iter__(self) -> BitStreamReader:
         return self
-    
+
+    # TODO: _bit_pointer is no longer an int
     def __next__(self) -> bytes:
+        raise NotImplementedError
+    
         if self._bit_pointer >= self.len_bits():
             raise StopIteration
         val = self._buffer[self.get_byte()]
@@ -246,10 +315,11 @@ class BitStreamReader(io.FileIO, BitStreamBuffer):
         val: bytes = b'\x00'
         mask_3 = mask(3)
         
-        for i in range(num_bits):
-            val = self.__next__()
-            result[res_pointer << 3] |= val << (7 - (i & mask_3))
-            res_pointer += 1
+        for i, j in self._bit_pointer:
+            # val = self.__next__()
+            # result[res_pointer << 3] |= val << (7 - (i & mask_3))
+            # res_pointer += 1
+            pass
         
         return result
         
