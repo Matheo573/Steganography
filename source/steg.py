@@ -2,7 +2,7 @@ import logging
 from argparse import ArgumentParser
 from typing import Callable
 import os
-from BitStream import *
+from BitStreamIO import *
 from PIL import Image
 
 default_buffer_size = 4096

@@ -19,19 +19,19 @@ bit_mask = mask(3)
 
 
 class BitPointer:
-    
+
     def __init__(self, length: int | None = None, init_address: int | None = None) -> None:
         DEFAULT_BUFFER_SIZE: int = 4096
-        
+
         if init_address is None:
             init_address = 0
         if length is None:
             length = DEFAULT_BUFFER_SIZE
-            
+
         self._address = init_address
         self._address_max = length << 3
         return
-    
+
     def __len__(self) -> int:
         return self._address_max >> 3
 
@@ -62,9 +62,9 @@ class BitPointer:
         """
         return self._address & bit_mask
 
-    def __iter__(self) -> "BitPointer":
+    def __iter__(self) -> BitPointer:
         return self
-    
+
     def __next__(self) -> tuple[int, int]:
         if self._address >= self._address_max:
             raise StopIteration
@@ -81,29 +81,38 @@ class BitPointer:
     def __repr__(self) -> str:
         return f"BitPointer({self._address_max}, {self._address})"
 
-    def __eq__(self, other: object) -> bool:
-        return int(self) == int(other)
+    @classmethod
+    def __match_args__(cls, *args):
+        if len(args) == 2:
+            return args
+        raise TypeError(f"No match for {args}")
 
-    def __ne__(self, other: object) -> bool:
-        return int(self) != int(other)
+    def compare(self, other: BitPointer) -> tuple[int, int]:
+        return self._address - other._address, self._address_max - other._address_max
 
-    def __lt__(self, other: object) -> bool:
-        return int(self) < int(other)
+    # def __eq__(self, other: object) -> bool:
+    #     return int(self) == int(other)
 
-    def __gt__(self, other: object) -> bool:
-        return int(self) > int(other)
+    # def __ne__(self, other: object) -> bool:
+    #     return int(self) != int(other)
 
-    def __le__(self, other: object) -> bool:
-        return self < other or self == other
+    # def __lt__(self, other: object) -> bool:
+    #     return int(self) < int(other)
 
-    def __ge__(self, other: object) -> bool:
-        return self > other or self == other
-    
+    # def __gt__(self, other: object) -> bool:
+    #     return int(self) > int(other)
+
+    # def __le__(self, other: object) -> bool:
+    #     return self < other or self == other
+
+    # def __ge__(self, other: object) -> bool:
+    #     return self > other or self == other
+
     def __add__(self, other: int) -> BitPointer:
-        return BitPointer(self._address + other)
+        return BitPointer(self._address_max, self._address + other)
 
     def __sub__(self, other: int) -> BitPointer:
-        return BitPointer(self._address - other)
+        return BitPointer(self._address_max, self._address - other)
 
     def __iadd__(self, other: int) -> BitPointer:
         self._address += other

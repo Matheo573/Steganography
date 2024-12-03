@@ -1,5 +1,5 @@
 import pytest
-from BitStream import *
+from source.BitStreamIO import *
 
 
 def test_BitStreamBuffer_defaults():
@@ -28,3 +28,8 @@ def test_BitStreamBuffer_3():
 def test_BitStreamBuffer_4():
     buffer = BitStreamBuffer(2, 8)
     assert True
+
+
+def test_BitStreamReader_1():
+    with BitStreamReader("D:\\PWr\\3rd_year\\CyberSec\\Steganography\\source\\test_file1.txt", 4) as reader:
+        assert str(reader.read_bits(8 * 10)) == "Lorem Ipsu"
