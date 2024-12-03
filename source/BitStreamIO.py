@@ -15,14 +15,16 @@ class BitStreamBuffer:
         return self
 
     # TODO: _bit_pointer is no longer an int
-    def __next__(self) -> int:
-        if self._bit_pointer >= self.len_bits():
+    def __next__(self) -> tuple[int, tuple[int, int]]:
+        try: 
+            adr = next(self._bit_pointer)
+        except StopIteration:
             raise StopIteration
-        val = self._buffer[self.get_byte()]
-        val >>= 7 - self.get_bit()
+        
+        val = self._buffer[adr[0]]
+        val >>= 7 - adr[1]
         val &= mask(1)
-        self._bit_pointer += 1
-        return val
+        return val, adr
     
     def get_buffer_size(self) -> int:
         return self._buffer_size
@@ -34,6 +36,7 @@ class BitStreamBuffer:
         except ValueError as ve:
             log.error(f"Failed to set new buffer size. Error: {ve}")
             return False
+
     def is_empty(self) -> bool:
         return self._buffer.__len__() == 0
 
@@ -85,7 +88,7 @@ class BitStreamBuffer:
             log.error(f"Failed to set new buffer. Error: {ve}")
             return False
 
-def clear_buffer(self, start: int | None, end: int | None) -> None:
+    def clear_buffer(self, start: int | None, end: int | None) -> None:
         """
         Clear the buffer content in the given range.
 
@@ -114,21 +117,18 @@ class BitStreamReader(io.FileIO, BitStreamBuffer):
         self,
         file: io.FileDescriptorOrPath,  # type: ignore
         buffer_size: int = 4096,
-        begin_pointer: int = 0,
         closefd: bool = True,
         opener: io._Opener | None = None,
     ) -> None:
         
         io.FileIO.__init__(self, file, mode="rb", closefd=closefd, opener=opener)
-        BitStreamBuffer.__init__(self, buffer_size, begin_pointer)
+        BitStreamBuffer.__init__(self, buffer_size, 0)
 
         return
 
     def is_EOF(self) -> bool:
         """
         Check if the end of the file has been reached.
-
-        This method seeks forward one byte and checks if the file pointer has reached the start of the file.
 
         Returns:
             bool: True if the end of the file has been reached, False otherwise.
@@ -175,17 +175,21 @@ class BitStreamReader(io.FileIO, BitStreamBuffer):
     def __iter__(self) -> BitStreamReader:
         return self
 
-    # TODO: _bit_pointer is no longer an int
-    def __next__(self) -> bytes:
-        raise NotImplementedError
-    
-        if self._bit_pointer >= self.len_bits():
-            raise StopIteration
-        val = self._buffer[self.get_byte()]
-        val >>= 7 - self.get_bit()
+    # TODO: doesn't read from file when reaching the end of buffer
+    def __next__(self) -> tuple[bytes, tuple[int, int]]:
+
+        try: 
+            adr = next(self._bit_pointer)
+        except StopIteration:
+            if self.is_EOF():
+                raise StopIteration
+            self.fill_buffer()
+            return next(self)
+        
+        val = self._buffer[adr[0]]
+        val >>= 7 - adr[1]
         val &= mask(1)
-        self._bit_pointer += 1
-        return val
+        return val, adr
 
     def read_bits(self, num_bits: int) -> bytearray:
         if num_bits == 0:
@@ -197,21 +201,26 @@ class BitStreamReader(io.FileIO, BitStreamBuffer):
             raise ValueError
         
         # TODO: what if num_bits > self.len_bits()?
-        if self._bit_pointer + num_bits > self.len_bits():  # if not enough bits in buffer
-            self.set_buffer(self._buffer[self.get_byte():] + self._buffer[:self.get_byte()])   # move remaining buffer to the start
-            self.fill_buffer(len(self) - self.get_byte())  # fill the rest of the buffer
-            self._bit_pointer = self.get_bit()              # reset pointer
-            
-        result: bytearray = bytearray((num_bits-1) >> 3 + 1)
-        res_pointer: int = 0
-        val: bytes = b'\x00'
-        mask_3 = mask(3)
+        # if num_bits > self._bit_pointer.len_bits():
+        #     log.error(f"Can't read more bits than buffer size. Maybe increase buffer size.")
+        #     raise ValueError
         
-        for i, j in self._bit_pointer:
-            # val = self.__next__()
-            # result[res_pointer << 3] |= val << (7 - (i & mask_3))
-            # res_pointer += 1
-            pass
+        # if self._bit_pointer + num_bits > len(self._buffer):  # if not enough bits in buffer
+        #     self.set_buffer(self._buffer[self._bit_pointer.get_byte():] + \
+        #         self._buffer[:self._bit_pointer.get_byte()])   # move remaining buffer to the start
+        #     self.fill_buffer(len(self._buffer) - self._bit_pointer.get_byte())  # fill the rest of the buffer
+        #     self._bit_pointer._address = self._bit_pointer.get_bit()              # reset pointer
+            
+        result: bytearray = bytearray((num_bits-1 >> 3) + 1)
+        res_pointer: int = 0
+        mask_3 = mask(3)
+        SHIFT_TO_BYTE = 3
+        
+        for val, adr in self:
+            result[res_pointer >> SHIFT_TO_BYTE] |= val << (mask_3 - adr[1])
+            res_pointer += 1
+            if res_pointer >= num_bits:
+                break
         
         return result
         
